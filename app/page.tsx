@@ -1,11 +1,11 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Zap, BarChart3, Users } from 'lucide-react';
 
-export default function LandingPage() {
+function LandingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -151,5 +151,13 @@ export default function LandingPage() {
         <p>© 2024 Meridian. All rights reserved.</p>
       </motion.div>
     </div>
+  );
+}
+
+export default function LandingPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <LandingPageContent />
+    </Suspense>
   );
 }
