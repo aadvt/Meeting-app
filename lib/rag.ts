@@ -27,14 +27,6 @@ export async function retrieve(
     department: string,
     topK = 3
 ): Promise<Array<{ content: string; chunk_type: string; similarity: number }>> {
-    console.log('RAG: Testing gemini-1.5-flash connection...')
-    try {
-        const testResp = await geminiFlash.generateContent('hi')
-        console.log('RAG: Gemini Flash test success:', testResp.response.text().slice(0, 10))
-    } catch (err: any) {
-        console.error('RAG: Gemini Flash test FAILED:', err.message)
-    }
-
     console.log('RAG: Retrieving for query:', query.slice(0, 50), 'dept:', department)
     const queryEmbedding = await embedText(query)
     console.log('RAG: Embedding generated successfully')

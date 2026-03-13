@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { geminiFlash } from "@/lib/gemini";
 
 export interface GraphNode {
   id: string;
@@ -37,64 +36,66 @@ export async function GET(req: NextRequest) {
     const department = searchParams.get("department") ?? "engineering";
     const meetingId = searchParams.get("meeting_id");
 
+    // Query graph_nodes joined with meetings for department filtering
     let query = supabaseAdmin
-      .from("meeting_chunks")
-      .select("id, meeting_id, content, chunk_type, speaker, timestamp, metadata, created_at")
-      .eq("department", department)
+      .from("graph_nodes")
+      .select("id, meeting_id, node_type, label, metadata, meetings!inner(department)")
+      .eq("meetings.department", department)
       .order("created_at", { ascending: true });
 
     if (meetingId) query = query.eq("meeting_id", meetingId);
 
-    const { data: chunks, error } = await query;
+    const { data: graphNodesData, error } = await query;
     if (error) throw error;
-    if (!chunks || chunks.length === 0) {
+    if (!graphNodesData || graphNodesData.length === 0) {
       return NextResponse.json({ nodes: [], edges: [], contradictions: [] });
     }
 
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
-    const personsSeen = new Set<string>();
-    const meetingsSeen = new Set<string>();
 
-    for (const chunk of chunks) {
-      if (!meetingsSeen.has(chunk.meeting_id)) {
-        meetingsSeen.add(chunk.meeting_id);
-        nodes.push({ id: `meeting:${chunk.meeting_id}`, label: `Meeting ${chunk.meeting_id.slice(-4)}`, type: "meeting", department, meeting_id: chunk.meeting_id });
-      }
+    // Build nodes from graph_nodes rows
+    for (const row of graphNodesData) {
+      const node: GraphNode = {
+        id: row.id,
+        label: row.label,
+        type: row.node_type as GraphNode["type"],
+        department,
+        meeting_id: row.meeting_id,
+        metadata: row.metadata || {},
+      };
+      nodes.push(node);
     }
 
-    for (const chunk of chunks) {
-      const nodeId = `chunk:${chunk.id}`;
-      nodes.push({ id: nodeId, label: chunk.content.length > 60 ? chunk.content.slice(0, 57) + "…" : chunk.content, type: chunk.chunk_type as GraphNode["type"], department, meeting_id: chunk.meeting_id, timestamp: chunk.timestamp, speaker: chunk.speaker, metadata: chunk.metadata });
-      edges.push({ source: `meeting:${chunk.meeting_id}`, target: nodeId, type: "belongs_to" });
-      if (chunk.speaker) {
-        const personId = `person:${chunk.speaker.toLowerCase().replace(/\s+/g, "_")}`;
-        if (!personsSeen.has(personId)) {
-          personsSeen.add(personId);
-          nodes.push({ id: personId, label: chunk.speaker, type: "person", department, meeting_id: chunk.meeting_id });
-        }
-        edges.push({ source: personId, target: nodeId, type: "owns" });
-      }
-    }
-
-    const decisions = chunks.filter((c) => c.chunk_type === "decision");
+    // Build contradiction edges from metadata.contradicts field
     const contradictionEdges: GraphData["contradictions"] = [];
 
-    if (decisions.length >= 2) {
-      const decisionList = decisions.map((d, i) => `[${i}] ID:${d.id} — ${d.content}`).join("\n");
-      const prompt = `Analyze these decisions and find any that directly contradict each other.\n\nDECISIONS:\n${decisionList}\n\nReturn ONLY valid JSON array (no markdown):\n[{"index_a": 0, "index_b": 1, "reason": "short explanation"}]\n\nReturn [] if no contradictions.`;
-      try {
-        const resp = await geminiFlash.generateContent(prompt);
-        const raw = resp.response.text().trim().replace(/^```json|```$/g, "").trim();
-        const conflicts: Array<{ index_a: number; index_b: number; reason: string }> = JSON.parse(raw);
-        for (const conflict of conflicts) {
-          const nodeA = `chunk:${decisions[conflict.index_a]?.id}`;
-          const nodeB = `chunk:${decisions[conflict.index_b]?.id}`;
-          if (!nodeA || !nodeB) continue;
-          contradictionEdges.push({ node_a: nodeA, node_b: nodeB, reason: conflict.reason });
-          edges.push({ source: nodeA, target: nodeB, type: "contradiction", label: "⚠ conflicts", contradiction_reason: conflict.reason });
+    for (const node of nodes) {
+      if (node.metadata?.contradicts) {
+        const targetMeetingId = node.metadata.contradicts;
+        // Find decision/action node from the target meeting that contradicts this one
+        const targetNode = nodes.find(
+          (n) =>
+            n.meeting_id === targetMeetingId &&
+            (n.type === "decision" || n.type === "action_item")
+        );
+        if (targetNode && targetNode.id !== node.id) {
+          contradictionEdges.push({
+            node_a: node.id,
+            node_b: targetNode.id,
+            reason:
+              node.metadata.contradiction_reason ||
+              "Contradiction detected",
+          });
+          edges.push({
+            source: node.id,
+            target: targetNode.id,
+            type: "contradiction",
+            label: "⚠ conflicts",
+            contradiction_reason: node.metadata.contradiction_reason,
+          });
         }
-      } catch { /* contradiction detection is best-effort */ }
+      }
     }
 
     return NextResponse.json({ nodes, edges, contradictions: contradictionEdges } as GraphData);
