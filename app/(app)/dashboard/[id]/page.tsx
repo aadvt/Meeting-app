@@ -3,6 +3,7 @@
 import { DepartmentDetail } from '@/components/department/DepartmentDetail';
 import { company } from '@/lib/data/mockData';
 import { useParams } from 'next/navigation';
+import KnowledgeGraph from "@/components/KnowledgeGraph";
 
 export default function DepartmentPage() {
   const params = useParams();
@@ -27,6 +28,11 @@ export default function DepartmentPage() {
     ?.meetings || [];
 
   return (
-    <DepartmentDetail department={department} meetings={meetings} />
+    <div className="flex flex-col min-h-screen">
+      <div className="max-w-7xl mx-auto w-full px-6 pt-10 pb-4">
+        <KnowledgeGraph department={departmentId} height={650} className="w-full" />
+      </div>
+      <DepartmentDetail department={department} meetings={meetings} />
+    </div>
   );
 }

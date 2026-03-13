@@ -7,7 +7,7 @@ import { Meeting, ActionItem } from '@/lib/types'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { OverviewTab } from './OverviewTab'
 import { TranscriptTab } from './TranscriptTab'
-import { KnowledgeGraphTab } from './KnowledgeGraphTab'
+import KnowledgeGraph from "@/components/KnowledgeGraph"
 import { OutputsTab } from './OutputsTab'
 import { fadeIn } from '@/lib/animations'
 import { ArrowLeft, Share2 } from 'lucide-react'
@@ -82,7 +82,7 @@ export function MeetingDetailView({ meeting, onSelectActionItem }: MeetingDetail
       </div>
 
       {/* Tabs */}
-      <div className="flex-1 px-6 py-6 overflow-hidden">
+      <div className="flex-1 px-6 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
           <TabsList className="mb-6 bg-card border border-border">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -105,8 +105,9 @@ export function MeetingDetailView({ meeting, onSelectActionItem }: MeetingDetail
           </TabsContent>
 
           {/* Knowledge Graph Tab */}
-          <TabsContent value="knowledge" className="flex-1 overflow-y-auto">
-            <KnowledgeGraphTab meeting={meeting} />
+          <TabsContent value="knowledge" className="flex-1 pb-10">
+            {/* @ts-ignore - meeting.department might not be in the strict type but exists in data */}
+            <KnowledgeGraph department={(meeting as any).department || "engineering"} meetingId={meeting.id} height={550} />
           </TabsContent>
 
           {/* Outputs Tab */}
