@@ -1,0 +1,249 @@
+{
+  "name": "Meridian Capture Pipeline",
+  "active": false,
+  "settings": {},
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Meridian — Meeting Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meridian-meeting-trigger",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "2",
+      "name": "Generate Meeting ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "jsCode": "return items.map((item) => ({ json: { ...item.json, meeting_id: crypto.randomUUID() } }));"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Send Bot to Google Meet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MERIDIAN_BASE_URL + '/api/capture/start' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { meeting_url: $json.meeting_url, department: $json.department, meeting_id: $json.meeting_id, meeting_title: $json.meeting_title || 'Untitled Meeting' } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "4",
+      "name": "Wait for Recording",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [750, 300],
+      "parameters": {
+        "resume": "webhook",
+        "webhookSuffix": "meridian-transcript-webhook"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Extract Insights via Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MERIDIAN_BASE_URL + '/api/rag/extract' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { transcript: $json.transcript || $json.body?.transcript || $json.data?.transcript, department: $json.department || $json.body?.department || $node['Generate Meeting ID'].json.department } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "6",
+      "name": "Ingest into Meridian RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MERIDIAN_BASE_URL + '/api/webhook/meeting' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { meeting_id: $node['Generate Meeting ID'].json.meeting_id, department: $node['Generate Meeting ID'].json.department, extracted: $json.extracted } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "7",
+      "name": "Fetch Updated Knowledge Graph",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MERIDIAN_BASE_URL + '/api/rag/graph?department=' + encodeURIComponent($node['Generate Meeting ID'].json.department) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "8",
+      "name": "Contradictions Detected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1750, 300],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ ($json.contradictions || []).length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9",
+      "name": "Alert: Contradiction Detected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 150],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: '⚠ Meridian contradiction(s) detected', blocks: [ { type: 'section', text: { type: 'mrkdwn', text: '*Meridian detected contradictions*' } }, { type: 'section', text: { type: 'mrkdwn', text: (($json.contradictions || []).map((c, i) => `${i + 1}. ${c.reason || 'Conflict'} (${c.node_a} ↔ ${c.node_b})`).join('\\n') || 'No contradiction details available.') } } ] } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "10",
+      "name": "Build Final Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300],
+      "parameters": {
+        "jsCode": "const extracted = $node['Extract Insights via Gemini'].json.extracted || {};\nconst ingestSummary = $node['Ingest into Meridian RAG'].json.summary || {};\nconst graph = $node['Fetch Updated Knowledge Graph'].json || {};\n\nreturn [{\n  json: {\n    meeting_id: $node['Generate Meeting ID'].json.meeting_id,\n    department: $node['Generate Meeting ID'].json.department,\n    decisions_count: ingestSummary.decisions ?? (extracted.decisions || []).length ?? 0,\n    actions_count: ingestSummary.actions ?? (extracted.action_items || []).length ?? 0,\n    risks_count: ingestSummary.risks ?? (extracted.risks || []).length ?? 0,\n    contradictions_count: (graph.contradictions || []).length ?? ingestSummary.contradictions ?? 0,\n    graph_nodes: (graph.nodes || []).length ?? 0,\n    status: 'complete'\n  }\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "Meridian — Meeting Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate Meeting ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Meeting ID": {
+      "main": [
+        [
+          {
+            "node": "Send Bot to Google Meet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Bot to Google Meet": {
+      "main": [
+        [
+          {
+            "node": "Wait for Recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Recording": {
+      "main": [
+        [
+          {
+            "node": "Extract Insights via Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Insights via Gemini": {
+      "main": [
+        [
+          {
+            "node": "Ingest into Meridian RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingest into Meridian RAG": {
+      "main": [
+        [
+          {
+            "node": "Fetch Updated Knowledge Graph",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Updated Knowledge Graph": {
+      "main": [
+        [
+          {
+            "node": "Contradictions Detected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contradictions Detected?": {
+      "main": [
+        [
+          {
+            "node": "Alert: Contradiction Detected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert: Contradiction Detected": {
+      "main": [
+        [
+          {
+            "node": "Build Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

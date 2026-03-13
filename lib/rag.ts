@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase'
 import { geminiFlash, embedText } from './gemini'
+import { getProfile } from './department-profiles'
 
 export type ChunkType = 'decision' | 'action_item' | 'discussion'
 
@@ -48,6 +49,7 @@ export async function extractWithRAG(
     department: string
 ): Promise<ExtractedMeeting> {
     console.log('RAG: extractWithRAG started for dept:', department)
+    const profile = getProfile(department)
     const pastContext = await retrieve(transcript.slice(0, 500), department)
     console.log('RAG: Retrieval done, context count:', pastContext.length)
 
@@ -56,7 +58,10 @@ export async function extractWithRAG(
             ? pastContext.map((c) => `- [${c.chunk_type}] ${c.content}`).join('\n')
             : 'No past context available yet.'
 
-    const prompt = `You are extracting structured data from a meeting transcript for the ${department} department.
+    const prompt = `You are extracting structured data from a ${profile.label} team meeting.
+
+DEPARTMENT FOCUS:
+${profile.extractionFocus}
 
 PAST DECISIONS/CONTEXT FROM THIS ORGANISATION:
 ${contextBlock}
@@ -72,8 +77,7 @@ Extract and return ONLY valid JSON with this exact structure:
   "contradictions": [{"new_decision": "", "conflicts_with": "", "reason": ""}]
 }
 
-For contradictions: compare new decisions against the PAST CONTEXT above and flag any conflicts.
-Return empty arrays if nothing found. Return JSON only, no markdown fences, no explanation.`
+Return empty arrays if nothing found. JSON only, no markdown.`
 
     const response = await geminiFlash.generateContent(prompt)
     const raw = response.response.text().trim().replace(/^```json|```$/g, '').trim()
