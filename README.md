@@ -119,6 +119,48 @@ pnpm start
 vercel deploy
 ```
 
+## Agent Pipeline (LangGraph)
+
+The meeting pipeline that used to live in n8n (`meridian-n8n-workflow.json`) now runs inside the Next.js server as a LangGraph graph (`lib/agent/`). No n8n or Docker is needed. Copy `.env.example` to `.env.local` and fill in the keys you need. Each integration is skipped when its env vars are missing.
+
+```
+START ─┬─▶ deploy_bot ─▶ poll_bot ⟲ ─┬─▶ process_recording ─▶ fetch_context
+       ├──────────────▶ poll_bot     └─▶ alert_failure (Slack) ─▶ END
+       └─────────────────────────────────────────────────────▶ fetch_context
+fetch_context ─▶ [extract ∥ intelligence_delta] ─▶ save_meeting
+save_meeting ─▶ [action_items ∥ ingest_rag ∥ notify ∥ code_tasks] ─▶ finalize ─▶ END
+```
+
+| Node | Replaces n8n node(s) |
+| --- | --- |
+| `deploy_bot`, `poll_bot`, `alert_failure` | Webhook → Deploy Bot → Wait 2 Minutes → Poll Bot Status → IF Done / IF Failed → Slack Error Alert |
+| `process_recording` | Process Meeting (Recall recording → Deepgram transcript) |
+| `fetch_context` | Supabase Fetch Past RAG Context (+ pgvector `match_chunks`) |
+| `extract`, `intelligence_delta` | Process Meeting extraction, OpenAI Intelligence Delta |
+| `save_meeting` | Supabase Save Meeting Row |
+| `action_items` | Prep Action Item Rows → Save Action Items / Google Calendar / Jira / GitHub Issue |
+| `ingest_rag` | Prep RAG Chunks → Embed Chunk → Save RAG Chunk |
+| `notify` | Gmail Create Draft (+ Slack summary) |
+| `code_tasks` | Identify File Tasks → Split In Batches → Write File Code → GitHub Commit (opt-in via `AGENT_ENABLE_CODE_COMMITS`) |
+| department routing | Switch Route by Department: uses `outputTargets` in `lib/department-profiles.ts` |
+
+**Triggers**
+
+```bash
+# Send a bot to a live meeting (old n8n webhook)
+curl -X POST localhost:3000/api/agent/trigger -H 'content-type: application/json' \
+  -d '{"meeting_url":"https://meet.google.com/abc-defg-hij","department":"eng"}'
+
+# Process a transcript directly (add "wait": true to get the result in the response)
+curl -X POST localhost:3000/api/agent/trigger -H 'content-type: application/json' \
+  -d '{"transcript":"Speaker 0: ...","department":"eng","wait":true}'
+
+# Check progress
+curl localhost:3000/api/agent/runs/<run_id>
+```
+
+Google Calendar trigger: set `AGENT_CALENDAR_POLL=true` to poll every minute in-process, or call `GET /api/agent/calendar-poll` from any cron job.
+
 ## Color System
 
 **Dark Theme Palette:**

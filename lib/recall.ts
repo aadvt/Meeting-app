@@ -15,6 +15,10 @@ export interface RecallBotStatus {
     status_changes: Array<{ code: string; created_at: string; message?: string }>
     video_url?: string
     meeting_url?: string
+    recordings?: Array<{
+        status?: { code: string }
+        media_shortcuts?: Record<string, { data?: { download_url?: string } } | null>
+    }>
 }
 
 /**
@@ -28,8 +32,7 @@ export async function deployBot(meetingUrl: string, botName = 'Meridian Note-Tak
         body: JSON.stringify({
             meeting_url: meetingUrl,
             bot_name: botName,
-            recording_mode: 'audio_only', // lighter weight; use 'video_and_audio' for full video
-            real_time_transcription: { destination_url: '' }, // disabled — using Deepgram post-processing
+            // No real-time transcription — the recording is transcribed with Deepgram afterwards
         }),
     })
     if (!res.ok) {
@@ -64,17 +67,10 @@ export async function getVideoUrl(botId: string): Promise<string | null> {
     const isDone = bot.status_changes?.some((s) => s.code === 'recording_done')
     if (!isDone) return null
 
-    // Recall provides media via recording objects
-    const recordingsRes = await fetch(`${RECALL_BASE}/bot/${botId}/recordings`, {
-        headers: RECALL_HEADERS,
-    })
-    if (!recordingsRes.ok) return null
-    const recordings = await recordingsRes.json()
-
-    // Get the first completed recording's media URL
-    const completed = recordings?.find?.((r: any) => r.status?.code === 'done')
-    return completed?.media_shortcuts?.audio_only?.data?.url
-        ?? completed?.media_shortcuts?.video_mixed?.data?.url
+    // Recordings are embedded in the bot object; media URLs live under media_shortcuts
+    const completed = bot.recordings?.find((r) => r.status?.code === 'done')
+    return completed?.media_shortcuts?.audio_mixed?.data?.download_url
+        ?? completed?.media_shortcuts?.video_mixed?.data?.download_url
         ?? bot.video_url
         ?? null
 }

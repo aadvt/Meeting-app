@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { listRuns } from '@/lib/agent/runs'
 
 /**
  * POST /api/recall/webhook
@@ -26,6 +27,11 @@ export async function POST(req: NextRequest) {
         if (!botId) {
             console.warn('[webhook] No bot_id in payload')
             return NextResponse.json({ received: true, processed: false })
+        }
+
+        // The LangGraph pipeline (/api/agent/trigger) polls its own bots — don't process twice
+        if (listRuns().some((run) => run.botId === botId && run.status === 'running')) {
+            return NextResponse.json({ received: true, processed: false, reason: 'handled by agent pipeline' })
         }
 
         // Look up which meeting this bot belongs to (we stored it as `recall:{bot_id}`)
