@@ -1,12 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { listRuns } from '@/lib/agent/runs'
+import { findActiveRunByBot, resumeRun } from '@/lib/agent/runs'
+
+export const maxDuration = 300
 
 /**
  * POST /api/recall/webhook
  * 
  * Receives real-time events from Recall.ai.
- * When recording is done — auto-triggers the processing pipeline.
+ * When recording is done — resumes the agent run for that bot, or (for bots deployed
+ * via /api/recall/deploy) auto-triggers the legacy processing pipeline.
  * 
  * Set this as your Recall webhook URL in the dashboard:
  *   https://your-domain/api/recall/webhook
@@ -16,22 +19,30 @@ export async function POST(req: NextRequest) {
         const body = await req.json()
         const { event, data } = body
 
-        console.log(`[webhook] Recall event: ${event}`, data)
+        // Legacy: { event: 'bot.status_change', data: { bot_id, status: { code } } }
+        // Current: { event: 'bot.done', data: { bot: { id }, data: { code } } }
+        const botId = (data?.bot?.id ?? data?.bot_id) as string | undefined
+        const code = event === 'bot.status_change' ? data?.status?.code : String(event ?? '').replace(/^bot\./, '')
+
+        console.log(`[webhook] Recall event: ${event} (${code}) bot=${botId}`)
+
+        if (!botId) {
+            return NextResponse.json({ received: true, processed: false })
+        }
+
+        // Bots deployed by the agent pipeline: resume (or let the in-process poller handle it)
+        const run = await findActiveRunByBot(botId)
+        if (run) {
+            if (run.status === 'waiting_for_recording' && ['done', 'fatal', 'recording_done'].includes(code)) {
+                after(() => resumeRun(run.id))
+                return NextResponse.json({ received: true, processed: true, run_id: run.id })
+            }
+            return NextResponse.json({ received: true, processed: false, reason: 'handled by agent pipeline' })
+        }
 
         // Only handle recording_done events
-        if (event !== 'bot.status_change' || data?.status?.code !== 'recording_done') {
+        if (code !== 'recording_done') {
             return NextResponse.json({ received: true, processed: false })
-        }
-
-        const botId = data?.bot_id as string
-        if (!botId) {
-            console.warn('[webhook] No bot_id in payload')
-            return NextResponse.json({ received: true, processed: false })
-        }
-
-        // The LangGraph pipeline (/api/agent/trigger) polls its own bots — don't process twice
-        if (listRuns().some((run) => run.botId === botId && run.status === 'running')) {
-            return NextResponse.json({ received: true, processed: false, reason: 'handled by agent pipeline' })
         }
 
         // Look up which meeting this bot belongs to (we stored it as `recall:{bot_id}`)

@@ -1,0 +1,11 @@
+# Never upload local secrets or the old n8n exports (they contain credentials)
+.env*.local
+.env
+meridian-n8n-workflow.json
+active-workflow.json
+.mcp.json
+# Not part of the deployed app
+fronttemplate
+scripts
+check-models.mjs
+list-models.js

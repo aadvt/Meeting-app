@@ -5,12 +5,14 @@ import { LogOut, Settings, Bell } from 'lucide-react';
 import { Company } from '@/lib/types';
 import { GlassDepartmentCard } from './GlassDepartmentCard';
 import { useRouter } from 'next/navigation';
+import type { ReactNode } from 'react';
 
 interface GlassDashboardProps {
   company: Company;
+  children?: ReactNode;
 }
 
-export function GlassDashboard({ company }: GlassDashboardProps) {
+export function GlassDashboard({ company, children }: GlassDashboardProps) {
   const router = useRouter();
 
   const handleLogout = () => {
@@ -77,6 +79,8 @@ export function GlassDashboard({ company }: GlassDashboardProps) {
             Manage departments and track meeting intelligence across your organization
           </p>
         </motion.div>
+
+        {children && <div className="mb-12">{children}</div>}
 
         {/* Departments Grid */}
         <motion.div

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { END } from '@langchain/langgraph'
 import { z } from 'zod'
 import { deployBot, getBotStatus, getVideoUrl } from '@/lib/recall'
 import { transcribeUrl } from '@/lib/deepgram'
@@ -19,6 +20,7 @@ const MAX_POLLS = Number(process.env.AGENT_MAX_POLLS ?? 120)
 const MAX_FILE_TASKS = Number(process.env.AGENT_MAX_FILE_TASKS ?? 3)
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 function requireState<T>(value: T | undefined, name: string): T {
@@ -112,10 +114,24 @@ export async function pollBotNode(state: PipelineStateType): Promise<PipelineUpd
     return { botStatus, pollAttempts: state.pollAttempts + 1 }
 }
 
-export function routeAfterPoll(state: PipelineStateType): 'process_recording' | 'alert_failure' | 'poll_bot' {
+/**
+ * Serverless hosts (Vercel) can't keep a function alive for a whole meeting, so there the
+ * graph ends after deploying the bot and the run is resumed later by the Recall webhook or
+ * a status check (see resumeRun). Long-lived servers poll in-process like the n8n Wait loop.
+ */
+export function deferRecordingWait(): boolean {
+    const mode = process.env.AGENT_RECORDING_WAIT
+    return mode ? mode === 'defer' : Boolean(process.env.VERCEL)
+}
+
+export function routeAfterDeploy(): 'poll_bot' | typeof END {
+    return deferRecordingWait() ? END : 'poll_bot'
+}
+
+export function routeAfterPoll(state: PipelineStateType): 'process_recording' | 'alert_failure' | 'poll_bot' | typeof END {
     if (state.botStatus === 'done') return 'process_recording'
     if (state.botStatus === 'failed' || state.botStatus === 'timed_out') return 'alert_failure'
-    return 'poll_bot'
+    return deferRecordingWait() ? END : 'poll_bot'
 }
 
 export async function alertFailureNode(state: PipelineStateType): Promise<PipelineUpdate> {
@@ -257,7 +273,7 @@ export async function saveMeetingNode(state: PipelineStateType): Promise<Pipelin
     }))
     if (participantRows.length > 0) {
         outputs.push(
-            await attempt('supabase', `Saved ${participantRows.length} participants`, async () => {
+            await attempt('supabase', `Saved ${plural(participantRows.length, 'participant')}`, async () => {
                 const { error } = await supabaseAdmin.from('participants').insert(participantRows)
                 if (error) throw new Error(error.message)
             })
@@ -281,7 +297,7 @@ export async function actionItemsNode(state: PipelineStateType): Promise<Pipelin
     const outputs: OutputLog[] = []
 
     outputs.push(
-        await attempt('supabase', `Saved ${items.length} action items`, async () => {
+        await attempt('supabase', `Saved ${plural(items.length, 'action item')}`, async () => {
             const { error } = await supabaseAdmin.from('actions').insert(
                 items.map((item) => ({ meeting_id: meetingId, description: item.text, owner: item.owner, status: 'pending' }))
             )
@@ -333,13 +349,13 @@ export async function ingestRagNode(state: PipelineStateType): Promise<PipelineU
     const outputs: OutputLog[] = []
 
     const meetingChunks = [
-        { kind: 'summary' as const, content: extraction.meeting_summary },
-        { kind: 'summary_delta' as const, content: state.delta ? `ANALYSIS DELTA: ${state.delta}` : '' },
+        { kind: 'summary' as const, label: 'Saved meeting summary to memory', content: extraction.meeting_summary },
+        { kind: 'summary_delta' as const, label: 'Saved change analysis to memory', content: state.delta ? `ANALYSIS DELTA: ${state.delta}` : '' },
     ].filter((c) => c.content.trim())
 
     for (const chunk of meetingChunks) {
         outputs.push(
-            await attempt('rag', `Embedded ${chunk.kind}`, async () => {
+            await attempt('rag', chunk.label, async () => {
                 await insertSummaryChunk({
                     meeting_id: meetingId,
                     department: state.department,
@@ -354,7 +370,7 @@ export async function ingestRagNode(state: PipelineStateType): Promise<PipelineU
     const allDecisions = decisions(state)
     const allActions = actionItems(state)
     outputs.push(
-        await attempt('rag', `Embedded ${allDecisions.length} decisions and ${allActions.length} action items`, () =>
+        await attempt('rag', `Saved ${plural(allDecisions.length, 'decision')} and ${plural(allActions.length, 'action item')} to memory`, () =>
             ingestMeeting(meetingId, state.department, {
                 decisions: allDecisions,
                 action_items: allActions.map((a) => ({ text: a.text, assignee: a.owner })),

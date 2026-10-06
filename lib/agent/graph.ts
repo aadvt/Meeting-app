@@ -13,6 +13,7 @@ import {
     notifyNode,
     pollBotNode,
     processRecordingNode,
+    routeAfterDeploy,
     routeAfterPoll,
     routeEntry,
     saveMeetingNode,
@@ -21,7 +22,8 @@ import {
 /**
  * Meridian meeting pipeline — LangGraph port of the n8n "Strategic Master" workflow.
  *
- *   START ─┬─▶ deploy_bot ─▶ poll_bot ◀─┐  (self-loop while recording)
+ *   START ─┬─▶ deploy_bot ─▶ poll_bot ◀─┐  (self-loop while recording; on Vercel both
+ *          │                              │   end early and the run resumes via webhook)
  *          ├──────────────▶ poll_bot ──┴─▶ alert_failure ─▶ END
  *          │                    │
  *          │                    ▼
@@ -54,8 +56,8 @@ function buildGraph() {
         .addNode('finalize', finalizeNode)
 
         .addConditionalEdges(START, routeEntry, ['deploy_bot', 'poll_bot', 'fetch_context'])
-        .addEdge('deploy_bot', 'poll_bot')
-        .addConditionalEdges('poll_bot', routeAfterPoll, ['poll_bot', 'process_recording', 'alert_failure'])
+        .addConditionalEdges('deploy_bot', routeAfterDeploy, ['poll_bot', END])
+        .addConditionalEdges('poll_bot', routeAfterPoll, ['poll_bot', 'process_recording', 'alert_failure', END])
         .addEdge('alert_failure', END)
         .addEdge('process_recording', 'fetch_context')
 

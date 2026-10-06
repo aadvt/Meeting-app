@@ -159,6 +159,10 @@ curl -X POST localhost:3000/api/agent/trigger -H 'content-type: application/json
 curl localhost:3000/api/agent/runs/<run_id>
 ```
 
+**UI:** the dashboard's *Meeting agent* panel sends a bot to a link or processes a pasted transcript and shows each run live.
+
+**Hosting on Vercel:** set `MERIDIAN_ACCESS_CODE` (every `/api` route then needs it), and point your Recall.ai webhook at `https://<your-domain>/api/recall/webhook`. Serverless functions can't wait for a whole meeting, so on Vercel a run pauses after sending the bot and resumes when Recall reports the recording is done. It also resumes whenever the run is open in the UI. Apply `supabase/schema.sql` to the database first.
+
 Google Calendar trigger: set `AGENT_CALENDAR_POLL=true` to poll every minute in-process, or call `GET /api/agent/calendar-poll` from any cron job.
 
 ## Color System

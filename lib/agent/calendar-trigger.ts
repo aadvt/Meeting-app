@@ -43,7 +43,7 @@ export async function pollCalendar(windowMinutes = 5): Promise<AgentRun[]> {
             title: event.summary,
             department: process.env.GOOGLE_CALENDAR_DEFAULT_DEPARTMENT,
         }
-        const run = createRun(input)
+        const run = await createRun(input)
         console.log(`[agent:calendar] Event "${event.summary}" started — run ${run.id}`)
         void executeRun(run, input)
         started.push(run)

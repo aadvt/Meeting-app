@@ -105,3 +105,24 @@ alter table public.actions        enable row level security;
 alter table public.meeting_chunks enable row level security;
 alter table public.graph_nodes    enable row level security;
 revoke execute on function public.match_chunks(extensions.vector, text, int) from anon, authenticated, public;
+
+-- ── Agent pipeline runs (lib/agent/runs.ts) ──────────────
+create table if not exists public.agent_runs (
+    id           uuid primary key default gen_random_uuid(),
+    status       text not null,              -- running | waiting_for_recording | completed | failed
+    current_step text,
+    steps        jsonb not null default '[]'::jsonb,
+    input        jsonb not null default '{}'::jsonb,
+    meeting_id   uuid,
+    bot_id       text,
+    bot_status   text,
+    outputs      jsonb not null default '[]'::jsonb,
+    errors       jsonb not null default '[]'::jsonb,
+    error        text,
+    started_at   timestamptz not null default now(),
+    finished_at  timestamptz,
+    updated_at   timestamptz not null default now()
+);
+create index if not exists agent_runs_started_idx on public.agent_runs (started_at desc);
+create index if not exists agent_runs_bot_idx on public.agent_runs (bot_id);
+alter table public.agent_runs enable row level security;
